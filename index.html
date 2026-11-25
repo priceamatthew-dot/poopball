@@ -1134,33 +1134,55 @@ async function roomT(code){
     clients:()=>nr.peers().filter(p=>!p.sameTab&&p.presence&&p.presence.r==='c').map(p=>({id:p.peer,msg:p.presence.m})),
     host:()=>{const p=nr.peers().find(p=>!p.sameTab&&p.presence&&p.presence.r==='h');return p?p.presence.s:null},
     close:()=>{nr.leave().catch(()=>{})}}}
-function peerT(code,host){return new Promise(res=>{
-  if(!window.Peer||!window.RTCPeerConnection)return res(null);
-  let peer;try{peer=host?new window.Peer('poopball-'+code.toLowerCase()):new window.Peer()}catch(e){return res(null)}
-  const cls=new Map();let hm=null,ht=0,conn=null,done=false;const fin=v=>{if(!done){done=true;res(v)}};
+/* Optional relay server for players on school / mobile networks that block direct connections.
+   Free key: sign up at metered.ca, then put your app name and API key here. */
+const TURN={app:'',key:''};
+let iceCache=null;
+async function iceServers(){if(iceCache)return iceCache;
+  const base=[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'},{urls:'stun:stun.cloudflare.com:3478'}];
+  if(TURN.app&&TURN.key){try{const r=await Promise.race([fetch(`https://${TURN.app}.metered.live/api/v1/turn/credentials?apiKey=${encodeURIComponent(TURN.key)}`).then(r=>r.json()),new Promise((_,rej)=>setTimeout(rej,4000))]);if(Array.isArray(r))return iceCache=base.concat(r)}catch(e){}}
+  return iceCache=base}
+function peerT(code,host,wait){return new Promise(async res=>{
+  if(!window.Peer||!window.RTCPeerConnection)return res({failed:'nopeer'});
+  const opts={config:{iceServers:await iceServers()},debug:0};
+  let peer;try{peer=host?new window.Peer('poopball-'+code.toLowerCase(),opts):new window.Peer(opts)}catch(e){return res({failed:'nopeer'})}
+  const cls=new Map();let hm=null,ht=0,conn=null,done=false,opened=false;const fin=v=>{if(!done){done=true;res(v)}};
   const T={kind:'peer',myId:()=>peer.id,
     sendState:s=>{for(const e of cls.values())if(e.conn.open)try{e.conn.send(s)}catch(_){}},
     sendInput:m=>{if(conn&&conn.open)try{conn.send(m)}catch(_){}},
-    clients:()=>[...cls].filter(([,e])=>e.msg&&performance.now()-e.at<5000).map(([id,e])=>({id,msg:e.msg})),
-    host:()=>performance.now()-ht<5000?hm:null,close:()=>{try{peer.destroy()}catch(_){}}};
-  peer.on('open',()=>{if(host)return fin(T);conn=peer.connect('poopball-'+code.toLowerCase(),{serialization:'json'});conn.on('open',()=>fin(T));conn.on('data',d=>{hm=d;ht=performance.now()})});
+    clients:()=>[...cls].filter(([,e])=>e.msg&&performance.now()-e.at<15000).map(([id,e])=>({id,msg:e.msg})),
+    host:()=>performance.now()-ht<15000?hm:null,close:()=>{try{peer.destroy()}catch(_){}}};
+  peer.on('open',()=>{opened=true;if(host)return fin(T);conn=peer.connect('poopball-'+code.toLowerCase(),{serialization:'json',reliable:true});conn.on('open',()=>fin(T));conn.on('data',d=>{hm=d;ht=performance.now()})});
   if(host)peer.on('connection',c=>{const e={conn:c,msg:null,at:0};c.on('data',d=>{e.msg=d;e.at=performance.now()});c.on('open',()=>cls.set(c.peer,e));c.on('close',()=>cls.delete(c.peer))});
+  peer.on('disconnected',()=>{if(done&&host)try{peer.reconnect()}catch(_){}});
   peer.on('error',e=>{if(!done){try{peer.destroy()}catch(_){}fin({failed:e&&e.type})}});
-  setTimeout(()=>{if(!done){try{peer.destroy()}catch(_){}fin({failed:'timeout'})}},12000)})}
+  setTimeout(()=>{if(!done){try{peer.destroy()}catch(_){}fin({failed:opened?'blocked':'server'})}},wait||12000)})}
+function bothT(a,b){return{kind:'both',myId:a.myId,sendState:s=>{a.sendState(s);b.sendState(s)},sendInput:()=>{},
+  clients:()=>a.clients().concat(b.clients()),host:()=>null,close:()=>{a.close();b.close()}}}
 function localT(code,host){
   if(!window.BroadcastChannel)return null;const ch=new BroadcastChannel('pb-'+code),id='L'+Math.random().toString(36).slice(2,8),cls=new Map();let hm=null,ht=0;
   ch.onmessage=e=>{const d=e.data;if(!d||typeof d!=='object')return;if(host&&d.r==='c')cls.set(String(d.id),{msg:d.m,at:performance.now()});if(!host&&d.r==='h'){hm=d.s;ht=performance.now()}};
   return{kind:'local',myId:()=>id,sendState:s=>ch.postMessage({r:'h',s}),sendInput:m=>ch.postMessage({r:'c',id,m}),
     clients:()=>[...cls].filter(([,e])=>performance.now()-e.at<4000).map(([id,e])=>({id,msg:e.msg})),host:()=>performance.now()-ht<4000?hm:null,close:()=>ch.close()}}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+/* Host opens BOTH a Claude room and an internet (PeerJS) room, so friends on the artifact link and on the GitHub link meet in the same game. */
 async function connect(code,host){
-  if(location.hash!=='#local'){const r=await roomT(code);if(r)return r;
-    const p=await peerT(code,host);if(p&&(!p.failed||p.failed==='unavailable-id'||(!host&&p.failed==='peer-unavailable')))return p}
-  return localT(code,host)}
-const NOTE={room:'Online through Claude. Friends open this same artifact (share it with them first), then join with this code.',peer:'Online. Friends open this page’s link and join with this code.',local:'Offline test mode: only other tabs in this browser can join.'};
+  if(location.hash==='#local')return localT(code,host);
+  const r=await roomT(code);
+  if(host){const p=await peerT(code,true,r?8000:12000);
+    if(p&&p.failed==='unavailable-id'){if(r)r.close();return p}
+    const ok=p&&!p.failed;if(r&&ok)return bothT(r,p);if(r)return r;if(ok)return p;return p||{failed:'nopeer'}}
+  if(r){for(let i=0;i<30;i++){if(r.host())return r;await sleep(200)}r.close()}
+  const p=await peerT(code,false);return p&&!p.failed?p:(p||{failed:'nopeer'})}
+const JOINERR={'peer-unavailable':'No game with that code. Check the code, and make sure the host still has the game open.',
+  blocked:'Found the game but couldn’t connect to it. School Wi-Fi and some phone networks block direct connections. Try both being on the same hotspot, or have the host add a relay key (see the TURN line in the code).',
+  server:'Couldn’t reach the matchmaking server. Check your internet and try again in a moment.',network:'Couldn’t reach the matchmaking server. Check your internet and try again in a moment.','server-error':'The matchmaking server is busy. Try again in a moment.',
+  nopeer:'Online play isn’t available in this browser here. Try opening the GitHub link in Chrome or Safari.'};
+const NOTE={both:'Online. Friends can join with this code from this artifact (share it with them first) or from your GitHub link. Keep this tab open: if you switch away, the game can pause.',room:'Online through Claude only. Friends must open this same artifact (share it with them first), then join with this code.',peer:'Online. Friends open this page’s link (or the Claude artifact) and join with this code. Keep this tab open: if you switch away, the game can pause.',local:'Offline test mode: only other tabs in this browser can join.'};
 function parseInp(a){if(!Array.isArray(a))return null;const n=(i,lo,hi)=>clamp(num(a[i]),lo,hi);
   return{mx:n(0,-1,1),mz:n(1,-1,1),yaw:n(2,-1e5,1e5),pitch:n(3,-2,2),walk:n(4,0,1),crouch:n(5,0,1),j:n(6,0,1e9)|0,r:n(7,0,1e9)|0,tp:n(8,0,1e9)|0,tr:n(9,0,1e9)|0,pw:n(10,-1,1),ax:n(11,-80,80),ay:n(12,-10,60),az:n(13,-80,80),em:n(14,0,1e9)|0,emi:n(15,0,5)|0,th:n(16,0,1)}}
 const inpArr=()=>[r2(inp.mx),r2(inp.mz),r2(inp.yaw),r2(inp.pitch),inp.walk,inp.crouch,inp.j,inp.r,inp.tp,inp.tr,r2(inp.pw),r2(inp.ax),r2(inp.ay),r2(inp.az),inp.em,inp.emi,holding?1:0];
-let sendAcc=0,lobbyKey='';
+let sendAcc=0,lobbyKey='';const lagEl=document.createElement('div');lagEl.hidden=true;lagEl.textContent='Connection hiccup, waiting for the host…';lagEl.style.cssText='position:fixed;left:50%;top:64px;transform:translateX(-50%);z-index:20;background:rgba(200,57,43,.92);color:#fff;font:800 14px Nunito,sans-serif;padding:8px 16px;border-radius:99px;pointer-events:none';document.body.appendChild(lagEl);
 function hostNet(dt){
   if(!NET)return;const now=performance.now();
   for(const{id,msg}of NET.clients()){
@@ -1169,9 +1191,9 @@ function hostNet(dt){
     if(!r){if(sim.state==='lobby'){if(sim.roster.length<8){sim.roster.push({id:sid,prof,isBot:false,team:-1});autoTeam()}}else if(sim.roster.length+pending.size<8)pending.set(sid,prof)}
     else if(sim.state==='lobby'&&JSON.stringify(r.prof)!==JSON.stringify(prof))r.prof=prof}
   for(const r of sim.roster.slice()){if(r.isBot||r.id===myId)continue;
-    if(now-(lastSeen.get(r.id)||0)>4500){sim.roster.splice(sim.roster.indexOf(r),1);const c=sim.players.find(p=>p.id===r.id);
+    if(now-(lastSeen.get(r.id)||0)>15000){sim.roster.splice(sim.roster.indexOf(r),1);const c=sim.players.find(p=>p.id===r.id);
       if(c&&sim.state==='play'){if(c.alive)down(c,null,false);c.respawnT=0;c.jailed=false;c.alive=false;emit(['f','left',c.id])}}}
-  for(const id of[...pending.keys()])if(now-(lastSeen.get(id)||0)>4500)pending.delete(id);
+  for(const id of[...pending.keys()])if(now-(lastSeen.get(id)||0)>15000)pending.delete(id);
   if((sendAcc+=dt)>=1/15){sendAcc=0;NET.sendState(makeSnap())}}
 function clientNet(dt){
   myId=NET.myId()||myId;
@@ -1179,8 +1201,9 @@ function clientNet(dt){
   const s=NET.host(),now=performance.now();
   if(s&&s!==cl.lastSnap){cl.lastSnap=s;cl.lastAt=now;applySnap(s)}
   const quiet=now-(cl.lastAt||cl.joinedAt);
-  if(!cl.lastSnap&&quiet>9000){leaveGame();netNote('No room found with that code.')}
-  else if(cl.lastSnap&&quiet>6000){leaveGame();netNote('The host left the game.')}}
+  lagEl.hidden=!(cl.lastSnap&&quiet>2500);
+  if(!cl.lastSnap&&quiet>12000){leaveGame();netNote('Connected, but the host isn’t sending the game. Ask them to bring the game tab to the front, then try again.')}
+  else if(cl.lastSnap&&quiet>15000){leaveGame();netNote('Lost the host. They may have left or switched away from the game for too long.')}}
 
 /* ---------- camera, aim, HUD ---------- */
 const ray=new THREE.Raycaster(),aimPt=new V(),tmp=new V();let aimOverride=0;
@@ -1310,17 +1333,17 @@ function showOver(res){
   setTimeout(()=>{const v=[...views.values()].find(c=>c.victory),q=$('#vquote');if(v&&v.prof.vp){q.hidden=false;q.textContent='\u201c'+v.prof.vp+'\u201d \u2014 '+v.prof.name}else q.hidden=true},120);
   statCards($('#overStats'));show('#overHost',isHost);show('#overClient',!isHost)}
 const ord=n=>n+(['th','st','nd','rd'][n]||'th');
-function leaveGame(){if(NET)try{NET.close()}catch(e){}NET=null;netKind='';roomCode='';isHost=true;sim.roster=[];sim.players=[];sim.state='lobby';pending.clear();remoteIn.clear();cl.roster=[];cl.lastSnap=null;cl.first=true;cl.lastSeq=-1;holding=false;showMenu()}
+function leaveGame(){lagEl.hidden=true;if(NET)try{NET.close()}catch(e){}NET=null;netKind='';roomCode='';isHost=true;sim.roster=[];sim.players=[];sim.state='lobby';pending.clear();remoteIn.clear();cl.roster=[];cl.lastSnap=null;cl.first=true;cl.lastSeq=-1;holding=false;showMenu()}
 const genCode=()=>Array.from({length:4},()=>'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.random()*32|0]).join('');
 function hostSetup(){isHost=true;myId='H';sim.roster=[{id:'H',prof:store.prof,isBot:false,team:-1}];sim.players=[];sim.state='lobby';sim.wins={};sim.ev=[];sim.gm=store.gm;sim.map=store.map;pending.clear()}
 $('#solo').onclick=()=>{hostSetup();NET=null;roomCode='';addBot('medium');addBot('medium');addBot('medium');autoTeam();clearViews();enterLobby()};
 $('#create').onclick=async()=>{netNote('Opening a room…');let t=null,code;
   for(let i=0;i<3;i++){code=genCode();t=await connect(code,true);if(!(t&&t.failed==='unavailable-id'))break}
-  if(!t||t.failed){netNote('Could not open an online room here. Try again, or host the page on GitHub Pages.');return}
+  if(!t||t.failed){netNote(JOINERR[t&&t.failed]||'Could not open an online room. Try again in a moment.');return}
   hostSetup();NET=t;netKind=t.kind;roomCode=code;netNote('');clearViews();enterLobby()};
 $('#joinF').onsubmit=async e=>{e.preventDefault();const code=$('#code').value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,4);if(code.length!==4){netNote('Room codes are 4 letters or numbers.');return}
   netNote('Joining…');const t=await connect(code,false);
-  if(!t||t.failed){netNote(t&&t.failed==='peer-unavailable'?'No room found with that code.':'Could not connect. Check the code and try again.');return}
+  if(!t||t.failed){netNote(JOINERR[t&&t.failed]||'Could not connect. Check the code and try again.');return}
   isHost=false;NET=t;netKind=t.kind;roomCode=code;netNote('');cl.joinedAt=performance.now();cl.lastSnap=null;cl.first=true;cl.lastSeq=-1;cl.roster=[];myId=t.myId()||'?';clearViews();enterLobby()};
 $('#botCtl').onclick=e=>{const d=e.target.dataset&&e.target.dataset.d;if(d&&isHost){addBot(d);renderLobby()}};
 $('#start').onclick=()=>{if(isHost){startRound();lockMouse()}};
@@ -1551,7 +1574,9 @@ function update(dt){
   if(isHost)for(const c of sim.players)if(c.boing){c.boing=false;sfx('boing',sfxAt(c.pos.x,c.y,c.pos.z))}
   auTick();updateModeVisuals();tickFx(dt);updateCam(dt);updateAim();updateHUD()}
 const clock=new THREE.Clock();
-function frame(){requestAnimationFrame(frame);const dt=Math.min(clock.getDelta(),.05);update(dt);renderer.render(scene,cam)}
+let lastFrameAt=0;
+function frame(){requestAnimationFrame(frame);lastFrameAt=performance.now();const dt=Math.min(clock.getDelta(),.05);update(dt);renderer.render(scene,cam)}
+try{const bw=new Worker(URL.createObjectURL(new Blob(['setInterval(()=>postMessage(0),40)'],{type:'text/javascript'})));bw.onmessage=()=>{if(NET&&isHost&&performance.now()-lastFrameAt>250){try{update(Math.min(clock.getDelta(),.05))}catch(e){}}}}catch(e){}
 function resize(){renderer.setSize(innerWidth,innerHeight);cam.aspect=innerWidth/innerHeight;cam.fov=innerHeight>innerWidth?80:66;cam.updateProjectionMatrix()}
 addEventListener('resize',resize);
 window.__pb={sim,views,cl,cam,renderer,scene,inp,get mode(){return mode},get myId(){return myId},setMap,store,get solids(){return solids},get mapG(){return mapG}};
