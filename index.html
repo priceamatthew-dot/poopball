@@ -735,10 +735,10 @@ function handleEv(e){
   else if(k==='d'){stink(num(e[3]),num(e[4]),num(e[5]));sfx('ko',sfxAt(num(e[3]),num(e[4]),num(e[5])))}
   else if(k==='s'){splash(num(e[2]),num(e[3]),num(e[4]),num(e[5])|0,!!e[6]);sfx('splat',sfxAt(num(e[2]),num(e[3]),num(e[4])),num(e[5])|0)}
 }
-function feedEv(kind,a,b,x){
+function feedEv(kind,a,b,x){return;
   const n=id=>id===myId?'you':(nameOf(id)||'Someone'),N=id=>cap(n(id));let t='',cls=(a===myId||b===myId)?'me':'';
   switch(kind){
-    case'hit':t=`${N(a)} hit ${n(b)}`+(x>0&&PT[x]?` with a ${PT[x].name.toLowerCase()}`:'');break;
+    case'hit':return;
     case'gold':t=`${N(a)} stole a life from ${n(b)} with a golden poop!`;cls='gold';break;
     case'wind':t='The wind changed direction';break;
     case'ko':t=b===myId?`${N(a)} knocked you out`:`${N(a)} knocked out ${n(b)}`;break;
