@@ -1012,8 +1012,9 @@ function makeSnap(){
     s.ps=sim.players.map(c=>[c.id,r2(c.pos.x),r2(c.y),r2(c.pos.z),r2(c.yaw),r2(c.vel.x),r2(c.vel.z),r2(c.vy),
       (c.alive?1:0)|(c.onGround?2:0)|(c.dive?4:0)|(c.inv>0?8:0)|(c.walking?16:0)|(c.cheer?32:0)|(c.crouch?64:0)|(c.jailed?128:0)|(c.frozenT>0?256:0)|(c.stunT>0?512:0)|(c.gasT>0?1024:0)|(c.slowT>0?2048:0)|(c.charging?4096:0)|(c.victory?8192:0),
       r2(c.hp),c.ammo,c.ptype,r2(c.reloadT),r2(c.throwT),r2(c.slingT),r2(c.roll),c.sling,r2(c.slideT),r2(c.getupT),r2(c.chargeT),c.emote,r2(c.emoteT),c.team,c.carrying]);
-    s.pr=sim.proj.slice(-14).map(p=>[p.id,r2(p.pos.x),r2(p.pos.y),r2(p.pos.z),r2(p.vel.x),r2(p.vel.y),r2(p.vel.z),p.type])}
+    s.pr=sim.proj.slice(-14).map(p=>[p.id,r2(p.pos.x),r2(p.pos.y),r2(p.pos.z),r2(p.vel.x),r2(p.vel.y),r2(p.vel.z),p.type,sim.players.indexOf(p.owner)])}
   if(sim.state==='over')s.res=sim.res;
+  s.n=++snapN;if(sim.state==='play'){const ak={};for(const[id,t]of ackTs)if(sim.roster.some(r=>r.id===id))ak[id]=t;s.ak=ak}
   const pr=sim.roster.filter(r=>r.prof.paint);if(pr.length){const st=sim.pps||(sim.pps={i:0,off:0});if(st.i>=pr.length){st.i=0;st.off=0}const r=pr[st.i],P=r.prof.paint;if(st.off>=P.length)st.off=0;s.pp=[r.id,phash(P),P.length,st.off,P.slice(st.off,st.off+500)];st.off+=500;if(st.off>=P.length){st.off=0;st.i=(st.i+1)%pr.length}}
   if(JSON.stringify(s).length>3300)delete s.pp;
   if(JSON.stringify(s).length>3300){if(s.pr)s.pr=s.pr.slice(-6);s.ev=s.ev.slice(-5)}
@@ -1039,18 +1040,44 @@ function applySnap(s){
     if(!Array.isArray(a))continue;const id=String(a[0]);seen.add(id);let c=views.get(id);const r=cl.roster.find(x=>x.id===id);
     if(!c){c=makeChar(id,r?r.prof:sanitizeProf({name:'?'}));views.set(id,c);c.pos.set(num(a[1]),num(a[2]),num(a[3]));c.y=num(a[2]);c.yaw=num(a[4]);if(id===myId){yaw=c.yaw;pitch=-.12}}
     if(r)setPaint(c,r.prof.paint);
-    c.tpos.set(num(a[1]),0,num(a[3]));c.ty=num(a[2]);c.tyaw=num(a[4]);c.vel.set(num(a[5]),0,num(a[6]));c.vy=num(a[7]);
-    if(c.tpos.distanceTo(c.pos)>5){c.pos.copy(c.tpos);c.y=c.ty}
-    const f=num(a[8])|0;c.alive=!!(f&1);c.onGround=!!(f&2);c.dive=f&4?1:0;c.inv=f&8?.1:0;c.walking=!!(f&16);c.cheer=!!(f&32);c.crouch=!!(f&64);c.jailed=!!(f&128);c.frozenT=f&256?.1:0;c.stunT=f&512?.1:0;c.gasT=f&1024?.1:0;c.slowT=f&2048?.1:0;c.charging=!!(f&4096);c.victory=!!(f&8192);
-    c.hp=num(a[9]);c.ammo=num(a[10]);c.ptype=clamp(num(a[11])|0,0,PT.length-1);c.reloadT=num(a[12]);c.throwT=num(a[13]);c.slingT=num(a[14]);c.roll=num(a[15]);c.sling=num(a[16]);c.slideT=num(a[17]);c.getupT=num(a[18]);c.chargeT=num(a[19]);
-    c.emote=clamp(num(a[20],-1)|0,-1,5);c.emoteT=num(a[21]);c.team=[0,1].includes(a[22])?a[22]:-1;c.carrying=[0,1].includes(a[23])?a[23]:-1}
+    const mine=id===myId&&pred.on;c.tpos.set(num(a[1]),0,num(a[3]));c.ty=num(a[2]);c.tyaw=num(a[4]);
+    if(!mine){c.vel.set(num(a[5]),0,num(a[6]));c.vy=num(a[7]);if(c.tpos.distanceTo(c.pos)>5){c.pos.copy(c.tpos);c.y=c.ty}}
+    const f=num(a[8])|0;c.alive=!!(f&1);if(!mine){c.onGround=!!(f&2);c.dive=f&4?1:0;c.walking=!!(f&16);c.crouch=!!(f&64)}c.inv=f&8?.1:0;c.cheer=!!(f&32);c.jailed=!!(f&128);c.frozenT=f&256?.1:0;c.stunT=f&512?.1:0;c.gasT=f&1024?.1:0;c.slowT=f&2048?.1:0;if(!mine)c.charging=!!(f&4096);c.victory=!!(f&8192);
+    c.hp=num(a[9]);c.ammo=num(a[10]);c.ptype=clamp(num(a[11])|0,0,PT.length-1);c.reloadT=num(a[12]);if(!mine||c.throwT<=0)c.throwT=num(a[13]);c.slingT=num(a[14]);if(!mine){c.roll=num(a[15]);c.slideT=num(a[17]);c.getupT=num(a[18]);c.chargeT=num(a[19])}c.sling=num(a[16]);
+    c.emote=clamp(num(a[20],-1)|0,-1,5);c.emoteT=num(a[21]);c.team=[0,1].includes(a[22])?a[22]:-1;c.carrying=[0,1].includes(a[23])?a[23]:-1;
+    if(mine)reconcile(c,s.ak&&typeof s.ak[myId]==='number'?s.ak[myId]:null)}
   for(const[id,c]of views)if(!seen.has(id)){dropChar(c);views.delete(id)}
   const ps=new Set();
-  for(const a of(Array.isArray(s.pr)?s.pr:[])){if(!Array.isArray(a))continue;const id=num(a[0]);ps.add(id);const m=projMesh(id,clamp(num(a[7])|0,0,PT.length-1));m.position.set(num(a[1]),num(a[2]),num(a[3]));m.userData.v=new V(num(a[4]),num(a[5]),num(a[6]))}
+  const myIdx=Array.isArray(s.ps)?s.ps.findIndex(a=>Array.isArray(a)&&String(a[0])===myId):-1;
+  for(const a of(Array.isArray(s.pr)?s.pr:[])){if(!Array.isArray(a))continue;const id=num(a[0]);ps.add(id);if(!projMeshes.has(id)&&myIdx>=0&&num(a[8],-1)===myIdx&&ghosts.length){const g=ghosts.shift();scene.remove(g)}const m=projMesh(id,clamp(num(a[7])|0,0,PT.length-1));m.position.set(num(a[1]),num(a[2]),num(a[3]));m.userData.v=new V(num(a[4]),num(a[5]),num(a[6]))}
   for(const[id,m]of projMeshes)if(!ps.has(id)){scene.remove(m);projMeshes.delete(id)}}
+const pred={on:false,hist:[],j:null,r:null};
+function predOK(c){return mode==='play'&&c&&c.alive&&!c.jailed&&!c.victory&&!c.cheer&&cl.freeze<=0}
+function predictMe(c,dt){
+  if(!predOK(c)){pred.on=false;pred.hist.length=0;pred.j=inp.j;pred.r=inp.r;return false}
+  if(!pred.on){pred.on=true;pred.j=inp.j;pred.r=inp.r;c.pos.copy(c.tpos);c.y=c.ty}
+  c.wish.set(inp.mx,0,inp.mz);if(c.wish.lengthSq()>1)c.wish.normalize();c.walking=!!inp.walk;if(!busy(c))c.crouch=!!inp.crouch&&c.onGround;
+  if(inp.j!==pred.j){pred.j=inp.j;jump(c)}if(inp.r!==pred.r){pred.r=inp.r;rollOrDive(c,c.wish.clone())}
+  if(c.roll<=0&&!c.dive&&c.slideT<=0)c.yaw=yaw;
+  moveChar(c,dt);if(c.boing)c.boing=false;
+  pred.hist.push({t:performance.now(),x:c.pos.x,y:c.y,z:c.pos.z});if(pred.hist.length>90)pred.hist.shift();
+  if(holding&&throwReady(c)){c.charging=true;c.chargeT=(performance.now()-holdAt)/1000}else if(c.charging&&!holding)c.charging=false;
+  c.rig.root.position.set(c.pos.x,c.y,c.pos.z);c.rig.root.rotation.y=c.yaw;return true}
+function reconcile(c,ack){
+  if(!pred.on)return;let h=null;if(ack!=null){for(let i=pred.hist.length-1;i>=0;i--)if(pred.hist[i].t<=ack+1){h=pred.hist[i];pred.hist.splice(0,i);break}}
+  if(!h)h=pred.hist[0]||{x:c.pos.x,y:c.y,z:c.pos.z};
+  const ex=c.tpos.x-h.x,ez=c.tpos.z-h.z,ey=c.ty-h.y,e=Math.hypot(ex,ez);
+  if(e>3.5||Math.abs(ey)>3){c.pos.x+=ex;c.pos.z+=ez;c.y+=ey;for(const q of pred.hist){q.x+=ex;q.z+=ez;q.y+=ey}return}
+  const f=e>.08?.35:0,fy=Math.abs(ey)>.25&&c.onGround?.35:0;
+  c.pos.x+=ex*f;c.pos.z+=ez*f;c.y+=ey*fy;for(const q of pred.hist){q.x+=ex*f;q.z+=ez*f;q.y+=ey*fy}}
+const ghosts=[];
+function ghostThrow(){const m=me();if(!m||!pred.on)return;const sl=m.sling>0,p=clamp(inp.pw,0,1),o=throwOrigin(m,sl),v=launchVel(o,new V(inp.ax,inp.ay,inp.az),pSpeed(p,sl));
+  const g=makePoop(PMAT[m.ptype]||PMAT[0]);g.position.copy(o);g.userData.v=v;g.userData.age=0;scene.add(g);ghosts.push(g);m.throwT=sl?SLING_T:THROW_T;m.charging=false}
 function clientTick(dt){
   const k=1-Math.exp(-dt*14);
-  for(const c of views.values()){c.tpos.x+=c.vel.x*dt;c.tpos.z+=c.vel.z*dt;c.pos.lerp(c.tpos,k);c.y+=(c.ty-c.y)*k;c.yaw=c.id===myId&&c.alive&&c.roll<=0&&!c.dive&&c.slideT<=0?yaw:lerpA(c.yaw,c.tyaw,k);
+  for(let i=ghosts.length-1;i>=0;i--){const g=ghosts[i];g.userData.age+=dt;stepP(g.position,g.userData.v,dt);g.rotation.x+=dt*8;if(g.userData.age>.9||g.position.y<-.5||worldHit(g.position,.28)){scene.remove(g);ghosts.splice(i,1)}}
+  for(const c of views.values()){if(c.id===myId&&predictMe(c,dt)){const wr=c.reloadT>0;for(const t of['reloadT','throwT','slingT'])if(c[t]>0)c[t]=Math.max(0,c[t]-dt);if(wr&&c.reloadT<=0&&c.alive&&!c.jailed)c.ammo=1;if(c.emote>=0)c.emoteT+=dt;continue}
+    c.tpos.x+=c.vel.x*dt;c.tpos.z+=c.vel.z*dt;c.pos.lerp(c.tpos,k);c.y+=(c.ty-c.y)*k;c.yaw=c.id===myId&&c.alive&&c.roll<=0&&!c.dive&&c.slideT<=0?yaw:lerpA(c.yaw,c.tyaw,k);
     const wr=c.reloadT>0;for(const t of['reloadT','throwT','slingT','roll','slideT','getupT'])if(c[t]>0)c[t]=Math.max(0,c[t]-dt);if(wr&&c.reloadT<=0&&c.alive&&!c.jailed)c.ammo=1;if(c.charging)c.chargeT+=dt;if(c.emote>=0)c.emoteT+=dt;
     c.rig.root.position.set(c.pos.x,c.y,c.pos.z);c.rig.root.rotation.y=c.yaw}
   for(const m of projMeshes.values())if(m.userData.v)stepP(m.position,m.userData.v,dt);
@@ -1153,12 +1180,12 @@ function peerT(code,host,wait){return new Promise(async res=>{
     sendInput:m=>{if(conn&&conn.open)try{conn.send(m)}catch(_){}},
     clients:()=>[...cls].filter(([,e])=>e.msg&&performance.now()-e.at<15000).map(([id,e])=>({id,msg:e.msg})),
     host:()=>performance.now()-ht<15000?hm:null,close:()=>{try{peer.destroy()}catch(_){}}};
-  peer.on('open',()=>{opened=true;if(host)return fin(T);conn=peer.connect('poopball-'+code.toLowerCase(),{serialization:'json',reliable:true});conn.on('open',()=>fin(T));conn.on('data',d=>{hm=d;ht=performance.now()})});
-  if(host)peer.on('connection',c=>{const e={conn:c,msg:null,at:0};c.on('data',d=>{e.msg=d;e.at=performance.now()});c.on('open',()=>cls.set(c.peer,e));c.on('close',()=>cls.delete(c.peer))});
+  peer.on('open',()=>{opened=true;if(host)return fin(T);conn=peer.connect('poopball-'+code.toLowerCase(),{serialization:'json',reliable:false});conn.on('open',()=>fin(T));conn.on('data',d=>{if(d&&hm&&d.n<hm.n&&hm.n-d.n<1e5)return;hm=d;ht=performance.now()})});
+  if(host)peer.on('connection',c=>{const e={conn:c,msg:null,at:0};c.on('data',d=>{if(d&&e.msg&&d.q<e.msg.q&&e.msg.q-d.q<1e5)return;e.msg=d;e.at=performance.now()});c.on('open',()=>cls.set(c.peer,e));c.on('close',()=>cls.delete(c.peer))});
   peer.on('disconnected',()=>{if(done&&host)try{peer.reconnect()}catch(_){}});
   peer.on('error',e=>{if(!done){try{peer.destroy()}catch(_){}fin({failed:e&&e.type})}});
   setTimeout(()=>{if(!done){try{peer.destroy()}catch(_){}fin({failed:opened?'blocked':'server'})}},wait||12000)})}
-function bothT(a,b){return{kind:'both',myId:a.myId,sendState:s=>{a.sendState(s);b.sendState(s)},sendInput:()=>{},
+function bothT(a,b){let la=0;return{kind:'both',myId:a.myId,sendState:s=>{b.sendState(s);const t=performance.now();if(t-la>=62){la=t;a.sendState(s)}},sendInput:()=>{},
   clients:()=>a.clients().concat(b.clients()),host:()=>null,close:()=>{a.close();b.close()}}}
 function localT(code,host){
   if(!window.BroadcastChannel)return null;const ch=new BroadcastChannel('pb-'+code),id='L'+Math.random().toString(36).slice(2,8),cls=new Map();let hm=null,ht=0;
@@ -1183,22 +1210,23 @@ const NOTE={both:'Online. Friends can join with this code from this artifact (sh
 function parseInp(a){if(!Array.isArray(a))return null;const n=(i,lo,hi)=>clamp(num(a[i]),lo,hi);
   return{mx:n(0,-1,1),mz:n(1,-1,1),yaw:n(2,-1e5,1e5),pitch:n(3,-2,2),walk:n(4,0,1),crouch:n(5,0,1),j:n(6,0,1e9)|0,r:n(7,0,1e9)|0,tp:n(8,0,1e9)|0,tr:n(9,0,1e9)|0,pw:n(10,-1,1),ax:n(11,-80,80),ay:n(12,-10,60),az:n(13,-80,80),em:n(14,0,1e9)|0,emi:n(15,0,5)|0,th:n(16,0,1)}}
 const inpArr=()=>[r2(inp.mx),r2(inp.mz),r2(inp.yaw),r2(inp.pitch),inp.walk,inp.crouch,inp.j,inp.r,inp.tp,inp.tr,r2(inp.pw),r2(inp.ax),r2(inp.ay),r2(inp.az),inp.em,inp.emi,holding?1:0];
-let sendAcc=0,lobbyKey='';const lagEl=document.createElement('div');lagEl.hidden=true;lagEl.textContent='Connection hiccup, waiting for the host…';lagEl.style.cssText='position:fixed;left:50%;top:64px;transform:translateX(-50%);z-index:20;background:rgba(200,57,43,.92);color:#fff;font:800 14px Nunito,sans-serif;padding:8px 16px;border-radius:99px;pointer-events:none';document.body.appendChild(lagEl);
+let sendAcc=0,lobbyKey='',snapN=0,inQ=0,lastSentKey='';const ackTs=new Map();const lagEl=document.createElement('div');lagEl.hidden=true;lagEl.textContent='Connection hiccup, waiting for the host…';lagEl.style.cssText='position:fixed;left:50%;top:64px;transform:translateX(-50%);z-index:20;background:rgba(200,57,43,.92);color:#fff;font:800 14px Nunito,sans-serif;padding:8px 16px;border-radius:99px;pointer-events:none';document.body.appendChild(lagEl);
 function hostNet(dt){
   if(!NET)return;const now=performance.now();
   for(const{id,msg}of NET.clients()){
     if(!msg||typeof msg!=='object')continue;const sid=String(id).slice(0,64);lastSeen.set(sid,now);
-    const prof=arrProf(msg.p);remoteIn.set(sid,parseInp(msg.i));const r=sim.roster.find(x=>x.id===sid);
+    const prof=arrProf(msg.p);remoteIn.set(sid,parseInp(msg.i));if(typeof msg.ts==='number')ackTs.set(sid,msg.ts);const r=sim.roster.find(x=>x.id===sid);
     if(!r){if(sim.state==='lobby'){if(sim.roster.length<MAXP){sim.roster.push({id:sid,prof,isBot:false,team:-1});autoTeam()}}else if(sim.roster.length+pending.size<MAXP)pending.set(sid,prof)}
     else if(sim.state==='lobby'&&JSON.stringify(r.prof)!==JSON.stringify(prof))r.prof=prof}
   for(const r of sim.roster.slice()){if(r.isBot||r.id===myId)continue;
     if(now-(lastSeen.get(r.id)||0)>15000){sim.roster.splice(sim.roster.indexOf(r),1);const c=sim.players.find(p=>p.id===r.id);
       if(c&&sim.state==='play'){if(c.alive)down(c,null,false);c.respawnT=0;c.jailed=false;c.alive=false;emit(['f','left',c.id])}}}
   for(const id of[...pending.keys()])if(now-(lastSeen.get(id)||0)>15000)pending.delete(id);
-  if((sendAcc+=dt)>=1/15){sendAcc=0;NET.sendState(makeSnap())}}
+  if((sendAcc+=dt)>=(NET.kind==='room'?1/15:1/22)){sendAcc=0;NET.sendState(makeSnap())}}
 function clientNet(dt){
   myId=NET.myId()||myId;
-  if((sendAcc+=dt)>=1/20){sendAcc=0;NET.sendInput({p:profArr(store.prof),i:inpArr()})}
+  const key=[inp.j,inp.r,inp.tp,inp.tr,inp.em].join();
+  if((sendAcc+=dt)>=(NET.kind==='room'?1/20:1/30)||key!==lastSentKey){sendAcc=0;lastSentKey=key;NET.sendInput({p:profArr(store.prof),i:inpArr(),q:++inQ,ts:Math.round(performance.now())})}
   const s=NET.host(),now=performance.now();
   if(s&&s!==cl.lastSnap){cl.lastSnap=s;cl.lastAt=now;applySnap(s)}
   const quiet=now-(cl.lastAt||cl.joinedAt);
@@ -1334,7 +1362,7 @@ function showOver(res){
   setTimeout(()=>{const v=[...views.values()].find(c=>c.victory),q=$('#vquote');if(v&&v.prof.vp){q.hidden=false;q.textContent='\u201c'+v.prof.vp+'\u201d \u2014 '+v.prof.name}else q.hidden=true},120);
   statCards($('#overStats'));show('#overHost',isHost);show('#overClient',!isHost)}
 const ord=n=>n+(['th','st','nd','rd'][n]||'th');
-function leaveGame(){lagEl.hidden=true;if(NET)try{NET.close()}catch(e){}NET=null;netKind='';roomCode='';isHost=true;sim.roster=[];sim.players=[];sim.state='lobby';pending.clear();remoteIn.clear();cl.roster=[];cl.lastSnap=null;cl.first=true;cl.lastSeq=-1;holding=false;showMenu()}
+function leaveGame(){lagEl.hidden=true;pred.on=false;pred.hist.length=0;for(const g of ghosts)scene.remove(g);ghosts.length=0;if(NET)try{NET.close()}catch(e){}NET=null;netKind='';roomCode='';isHost=true;sim.roster=[];sim.players=[];sim.state='lobby';pending.clear();remoteIn.clear();cl.roster=[];cl.lastSnap=null;cl.first=true;cl.lastSeq=-1;holding=false;showMenu()}
 const genCode=()=>Array.from({length:4},()=>'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.random()*32|0]).join('');
 function hostSetup(){isHost=true;myId='H';sim.roster=[{id:'H',prof:store.prof,isBot:false,team:-1}];sim.players=[];sim.state='lobby';sim.wins={};sim.ev=[];sim.gm=store.gm;sim.map=store.map;pending.clear()}
 $('#solo').onclick=()=>{hostSetup();NET=null;roomCode='';addBot('medium');addBot('medium');addBot('medium');autoTeam();clearViews();enterLobby()};
@@ -1429,7 +1457,7 @@ function throwReady(m){return !m||(m.alive&&!m.jailed&&!robber(m)&&m.carrying<0&
 function pressThrow(){if(!playing())return;const m=me();
   if(!throwReady(m)){denyAt=performance.now();if(m&&m.alive&&!m.jailed&&!robber(m)&&m.carrying<0)sfx('tick',.35);return}
   holding=true;holdAt=performance.now();inp.tp++;inp.th=1}
-function releaseThrowIn(pw){if(!holding)return;holding=false;inp.th=0;inp.pw=pw!=null?pw:clamp((performance.now()-holdAt)/1000/myChMax(),0,1);inp.tr++}
+function releaseThrowIn(pw){if(!holding)return;holding=false;inp.th=0;inp.pw=pw!=null?pw:clamp((performance.now()-holdAt)/1000/myChMax(),0,1);inp.tr++;if(NET&&!isHost)try{ghostThrow()}catch(e){}}
 cv.addEventListener('mousedown',e=>{if(mode!=='play'||e.button!==0)return;if(wheelOpen)return;if(document.pointerLockElement===cv){pressThrow();return}mdown={moved:0};pressThrow();if(!noLock)lockMouse()});
 addEventListener('mouseup',e=>{if(e.button===0&&holding)releaseThrowIn();mdown=null});
 addEventListener('mousemove',e=>{if(mode!=='play')return;if(wheelOpen&&document.pointerLockElement===cv){wheelVec.x+=e.movementX;wheelVec.y+=e.movementY;const l=Math.hypot(wheelVec.x,wheelVec.y);if(l>120){wheelVec.x*=120/l;wheelVec.y*=120/l}if(l>30){let a=Math.atan2(wheelVec.y,wheelVec.x)+Math.PI/2;a=(a+Math.PI*2+Math.PI/6)%(Math.PI*2);selWheel(Math.floor(a/(Math.PI/3))%6)}return}
@@ -1560,7 +1588,7 @@ function update(dt){
   T+=dt;
   if(mode==='play')buildInput(dt);else{inp.mx=inp.mz=0}
   if(NET){if(isHost)hostNet(dt);else clientNet(dt)}
-  if(isHost&&(mode==='play'||mode==='over'))simTick(dt);else if(!isHost&&(mode==='play'||mode==='over'))clientTick(dt);
+  if(mode==='play'||mode==='over'){let r=dt;while(r>1e-4){const h=Math.min(r,.05);if(isHost)simTick(h);else clientTick(h);r-=h}}
   if(mode==='lobby'&&isHost)renderLobby();
   if(mode==='menu'||mode==='lobby'||mode==='keys'||mode==='stats'||mode==='paint'){let i=0;for(const c of views.values()){c.yaw=mode==='paint'?viewYaw:viewYaw+Math.sin(T*.6+i++)*.15;c.rig.root.position.set(c.pos.x,c.y,c.pos.z);c.rig.root.rotation.y=c.yaw;c.rig.root.visible=true}}
   for(const c of views.values())pose(c,dt);
@@ -1576,11 +1604,11 @@ function update(dt){
   auTick();updateModeVisuals();tickFx(dt);updateCam(dt);updateAim();updateHUD()}
 const clock=new THREE.Clock();
 let lastFrameAt=0;
-function frame(){requestAnimationFrame(frame);lastFrameAt=performance.now();const dt=Math.min(clock.getDelta(),.05);update(dt);renderer.render(scene,cam)}
-try{const bw=new Worker(URL.createObjectURL(new Blob(['setInterval(()=>postMessage(0),40)'],{type:'text/javascript'})));bw.onmessage=()=>{if(NET&&isHost&&performance.now()-lastFrameAt>250){try{update(Math.min(clock.getDelta(),.05))}catch(e){}}}}catch(e){}
+function frame(){requestAnimationFrame(frame);lastFrameAt=performance.now();const dt=Math.min(clock.getDelta(),.15);update(dt);renderer.render(scene,cam)}
+try{const bw=new Worker(URL.createObjectURL(new Blob(['setInterval(()=>postMessage(0),40)'],{type:'text/javascript'})));bw.onmessage=()=>{if(NET&&isHost&&performance.now()-lastFrameAt>250){try{update(Math.min(clock.getDelta(),.15))}catch(e){}}}}catch(e){}
 function resize(){renderer.setSize(innerWidth,innerHeight);cam.aspect=innerWidth/innerHeight;cam.fov=innerHeight>innerWidth?80:66;cam.updateProjectionMatrix()}
 addEventListener('resize',resize);
-window.__pb={sim,views,cl,cam,renderer,scene,inp,get mode(){return mode},get myId(){return myId},setMap,store,get solids(){return solids},get mapG(){return mapG}};
+window.__pb={sim,views,cl,cam,renderer,scene,inp,get mode(){return mode},get myId(){return myId},setMap,store,get solids(){return solids},get mapG(){return mapG},pred};
 resize();renderCust();showTip();renderXh();showMenu();frame();
 }
 }
