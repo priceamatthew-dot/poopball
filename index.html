@@ -1156,7 +1156,7 @@ async function getRoom(){if(!(window.claude&&typeof window.claude.use==='functio
   try{return await Promise.race([window.claude.use('room'),new Promise(r=>setTimeout(()=>r(null),10000))])}catch(e){return null}}
 async function roomT(code){
   const room=await getRoom();if(!room)return null;
-  let nr;try{nr=await room.join('pb-'+code.toLowerCase())}catch(e){return null}
+  let nr;try{nr=await Promise.race([room.join('pb-'+code.toLowerCase()),new Promise(r=>setTimeout(()=>r(null),6000))])}catch(e){return null}if(!nr)return null;
   return{kind:'room',myId:()=>{const p=nr.peers().find(p=>p.sameTab);return p?p.peer:null},
     sendState:s=>{nr.presence({r:'h',s}).catch(()=>{})},sendInput:m=>{nr.presence({r:'c',m}).catch(()=>{})},
     clients:()=>nr.peers().filter(p=>!p.sameTab&&p.presence&&p.presence.r==='c').map(p=>({id:p.peer,msg:p.presence.m})),
@@ -1194,18 +1194,20 @@ function localT(code,host){
     clients:()=>[...cls].filter(([,e])=>performance.now()-e.at<4000).map(([id,e])=>({id,msg:e.msg})),host:()=>performance.now()-ht<4000?hm:null,close:()=>ch.close()}}
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 /* Host opens BOTH a Claude room and an internet (PeerJS) room, so friends on the artifact link and on the GitHub link meet in the same game. */
-async function connect(code,host){
+async function connect(code,host,step){step=step||(()=>{});
   if(location.hash==='#local')return localT(code,host);
-  const r=await roomT(code);
+  step('Looking for the game');const r=await roomT(code);
   if(host){const p=await peerT(code,true,r?8000:12000);
     if(p&&p.failed==='unavailable-id'){if(r)r.close();return p}
     const ok=p&&!p.failed;if(r&&ok)return bothT(r,p);if(r)return r;if(ok)return p;return p||{failed:'nopeer'}}
   if(r){for(let i=0;i<30;i++){if(r.host())return r;await sleep(200)}r.close()}
-  const p=await peerT(code,false);return p&&!p.failed?p:(p||{failed:'nopeer'})}
+  step('Connecting to the host');const p=await peerT(code,false,10000);return p&&!p.failed?p:(p||{failed:'nopeer'})}
 const JOINERR={'peer-unavailable':'No game with that code. Check the code, and make sure the host still has the game open.',
   blocked:'Found the game but couldn’t connect to it. School Wi-Fi and some phone networks block direct connections. Try both being on the same hotspot, or have the host add a relay key (see the TURN line in the code).',
   server:'Couldn’t reach the matchmaking server. Check your internet and try again in a moment.',network:'Couldn’t reach the matchmaking server. Check your internet and try again in a moment.','server-error':'The matchmaking server is busy. Try again in a moment.',
-  nopeer:'Online play isn’t available in this browser here. Try opening the GitHub link in Chrome or Safari.'};
+  nopeer:'Online play isn’t available in this browser here. Try opening the GitHub link in Chrome or Safari.',
+  slow:'Couldn’t connect after 25 seconds. Tap Join to try again. If it keeps happening, this network is probably blocking it (school Wi-Fi or phone data): try a phone hotspot or the other link.'};
+let joinTok=0;
 const NOTE={both:'Online. Friends can join with this code from this artifact (share it with them first) or from your GitHub link. Keep this tab open: if you switch away, the game can pause.',room:'Online through Claude only. Friends must open this same artifact (share it with them first), then join with this code.',peer:'Online. Friends open this page’s link (or the Claude artifact) and join with this code. Keep this tab open: if you switch away, the game can pause.',local:'Offline test mode: only other tabs in this browser can join.'};
 function parseInp(a){if(!Array.isArray(a))return null;const n=(i,lo,hi)=>clamp(num(a[i]),lo,hi);
   return{mx:n(0,-1,1),mz:n(1,-1,1),yaw:n(2,-1e5,1e5),pitch:n(3,-2,2),walk:n(4,0,1),crouch:n(5,0,1),j:n(6,0,1e9)|0,r:n(7,0,1e9)|0,tp:n(8,0,1e9)|0,tr:n(9,0,1e9)|0,pw:n(10,-1,1),ax:n(11,-80,80),ay:n(12,-10,60),az:n(13,-80,80),em:n(14,0,1e9)|0,emi:n(15,0,5)|0,th:n(16,0,1)}}
@@ -1371,7 +1373,10 @@ $('#create').onclick=async()=>{netNote('Opening a room…');let t=null,code;
   if(!t||t.failed){netNote(JOINERR[t&&t.failed]||'Could not open an online room. Try again in a moment.');return}
   hostSetup();NET=t;netKind=t.kind;roomCode=code;netNote('');clearViews();enterLobby()};
 $('#joinF').onsubmit=async e=>{e.preventDefault();const code=$('#code').value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,4);if(code.length!==4){netNote('Room codes are 4 letters or numbers.');return}
-  netNote('Joining…');const t=await connect(code,false);
+  const tok=++joinTok,t0=performance.now();let stepTxt='Joining';const tick=setInterval(()=>{if(tok===joinTok)netNote(`${stepTxt}… ${Math.round((performance.now()-t0)/1000)}s (tap Join again to retry)`)},500);netNote('Joining…');
+  const cp=connect(code,false,x=>{stepTxt=x});const t=await Promise.race([cp,sleep(25000).then(()=>({failed:'slow'}))]);clearInterval(tick);
+  if(tok!==joinTok||mode!=='menu'){cp.then(x=>{if(x&&x.close&&x!==NET)x.close()});return}
+  if(t&&t.failed==='slow')cp.then(x=>{if(x&&x.close)x.close()});
   if(!t||t.failed){netNote(JOINERR[t&&t.failed]||'Could not connect. Check the code and try again.');return}
   isHost=false;NET=t;netKind=t.kind;roomCode=code;netNote('');cl.joinedAt=performance.now();cl.lastSnap=null;cl.first=true;cl.lastSeq=-1;cl.roster=[];myId=t.myId()||'?';clearViews();enterLobby()};
 $('#botCtl').onclick=e=>{const d=e.target.dataset&&e.target.dataset.d;if(d&&isHost){addBot(d);renderLobby()}};
