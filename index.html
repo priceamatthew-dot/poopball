@@ -510,7 +510,7 @@ const MAPS={
     B.box(-14,13,5,6,3.8,0,{mat:wm(2,3,0x8fae8a)});B.deco(box(5.4,.12,1.6),fm(0xd0473a),-14,3.05,9.4).rotation.x=-.3;
     const car=(x,z,rot,col)=>{B.box(x,z,rot?1.9:3.7,rot?3.7:1.9,1.2,0,{noMesh:true});const g=new THREE.Group();g.position.set(x,0,z);g.rotation.y=rot?Math.PI/2:0;mapG.add(g);const cm=fm(col,.4);
       add(g,box(3.6,.75,1.8),cm,0,.65,0);add(g,box(2,.6,1.6),cm,-.2,1.3,0);add(g,box(2.05,.45,1.62),fm(0x2a3442,.2),-.2,1.32,0);for(const[wx,wz]of[[-1.1,-.9],[1.1,-.9],[-1.1,.9],[1.1,.9]]){const w=add(g,cyl(.36,.36,.25,14),fm(0x1e1e1e),wx,.36,wz);w.rotation.x=Math.PI/2}};
-    car(7,-5,0,0xd0473a);car(-7,5,1,0x3d6fc4);car(5,15,0,0xe3b341);car(-16,-4,1,0x4f9a4f);car(17,8.5,1,0xefe9dd);
+    car(7,-5,0,0xd0473a);car(-7,5,1,0x3d6fc4);car(5,11.5,0,0xe3b341);car(-16,-4,1,0x4f9a4f);car(17,8.5,1,0xefe9dd);
     for(const[x,z]of[[-5,-16],[16,17]]){B.box(x,z,2.2,1.2,1.4,0x3f7a4a);B.deco(box(2.3,.12,1.3),fm(0x2f5a38),x,1.46,z)}
     B.box(4,-3.2,.4,.4,.8,0xd0473a);
     for(const[x,z]of[[8,8],[-8,-8],[9,-9],[-10,9]]){B.box(x,z,1.4,1.4,.06,0,{noMesh:true,launch:true});B.flat(new THREE.CircleGeometry(.7,20),fm(0x2a2a2a,.5),x,.02,z);B.flat(new THREE.RingGeometry(.55,.62,20),fm(0x666666),x,.025,z);
@@ -550,7 +550,7 @@ function setMap(id){
   M.build(Bm)}
 const inSolid=(x,z,m)=>solids.some(o=>Math.abs(x-o.x)<o.w/2+m&&Math.abs(z-o.z)<o.d/2+m);
 function randSpot(){let x,z,n=0;do{x=R(-21,21);z=R(-21,21)}while(inSolid(x,z,1)&&++n<60);return{x,z}}
-const SP=[[0,-20],[0,20],[-20,0],[20,0],[-20,-20],[20,20],[20,-20],[-20,20]];
+const SP=[[0,-20],[0,20],[-20,0],[20,0],[-20,-20],[20,20],[20,-20],[-20,20],[-10,-21],[10,21],[-21,10],[21,-10]];
 const BASE=[new V(0,0,-19),new V(0,0,19)],JAIL={x:19,z:0,h:2.1},LEVER={x:15.3,z:0};
 
 /* ---------- mode visuals ---------- */
@@ -941,10 +941,11 @@ function autoTeam(){const gm=sim.gm;if(gm==='ffa'){sim.roster.forEach(r=>r.team=
   if(gm==='cops'){const n=sim.roster.length,cops=Math.max(1,Math.round(n/3));let c=sim.roster.filter(r=>r.team===0).length;sim.roster.forEach(r=>{if(r.team!==0&&r.team!==1)r.team=1});
     for(const r of sim.roster){if(c<cops&&r.team===1){r.team=0;c++}else if(c>cops&&r.team===0){r.team=1;c--}}return}
   sim.roster.forEach(r=>{if(r.team!==0&&r.team!==1){const a=sim.roster.filter(x=>x.team===0).length,b=sim.roster.filter(x=>x.team===1).length;r.team=a<=b?0:1}})}
-function addBot(d){if(sim.roster.length>=8)return;sim.roster.push({id:'b'+Math.random().toString(36).slice(2,7),prof:botProfile(),isBot:true,diff:d,team:-1});autoTeam()}
-function spawnSpot(c,i){const gm=sim.gm;if(gm==='ffa')return SP[i%8];const b=BASE[c.team===1?1:0];return[b.x+((i%4)-1.5)*2.2,b.z+(b.z>0?1:-1)*(i>=4?-2:0)]}
+const MAXP=12;
+function addBot(d){if(sim.roster.length>=MAXP)return;sim.roster.push({id:'b'+Math.random().toString(36).slice(2,7),prof:botProfile(),isBot:true,diff:d,team:-1});autoTeam()}
+function spawnSpot(c,i){const gm=sim.gm;if(gm==='ffa')return SP[i%SP.length];const b=BASE[c.team===1?1:0];return[b.x+((i%4)-1.5)*2.2,b.z+(b.z>0?1:-1)*-2*Math.min(2,i>>2)]}
 function startRound(){
-  for(const[id,prof]of pending){if(sim.roster.length<8&&!sim.roster.some(r=>r.id===id))sim.roster.push({id,prof,isBot:false,team:-1})}pending.clear();
+  for(const[id,prof]of pending){if(sim.roster.length<MAXP&&!sim.roster.some(r=>r.id===id))sim.roster.push({id,prof,isBot:false,team:-1})}pending.clear();
   autoTeam();
   if(sim.roster.length<2)return;
   if(sim.gm!=='ffa'&&(!sim.roster.some(r=>r.team===0)||!sim.roster.some(r=>r.team===1))){sim.roster.forEach((r,i)=>r.team=sim.gm==='cops'?(i===0?0:1):i%2);}
@@ -1026,7 +1027,7 @@ function applySnap(s){
   if(Array.isArray(s.pp)&&s.pp.length===5){const id=String(s.pp[0]),h=String(s.pp[1]),len=clamp(num(s.pp[2])|0,0,2000),off=num(s.pp[3])|0;let b=cl.pbuf.get(id);if(!b||b.h!==h){b={h,len,parts:new Map()};cl.pbuf.set(id,b)}b.parts.set(off,String(s.pp[4]));
     let str='';for(let o=0;o<b.len;o+=500){const q=b.parts.get(o);if(q==null){str=null;break}str+=q}if(str!=null&&phash(str)===h)cl.paints.set(id,arrProf([0,0,0,0,0,0,0,str]).paint)}
   if(Array.isArray(s.wd)){wind.x=clamp(num(s.wd[0]),-8,8);wind.z=clamp(num(s.wd[1]),-8,8)}
-  cl.roster=s.ro.filter(Array.isArray).slice(0,8).map(a=>{const id=String(a[0]);let paint=cl.paints.get(id)||'';if(phash(paint)!==String(a[8]||''))paint='';return{id,prof:arrProf([...a.slice(1,8),paint,a[11]]),isBot:!!a[9],diff:DIFF[a[9]]?a[9]:null,team:[0,1].includes(a[10])?a[10]:-1}});
+  cl.roster=s.ro.filter(Array.isArray).slice(0,12).map(a=>{const id=String(a[0]);let paint=cl.paints.get(id)||'';if(phash(paint)!==String(a[8]||''))paint='';return{id,prof:arrProf([...a.slice(1,8),paint,a[11]]),isBot:!!a[9],diff:DIFF[a[9]]?a[9]:null,team:[0,1].includes(a[10])?a[10]:-1}});
   cl.sling=Array.isArray(s.sp)?[num(s.sp[0]),num(s.sp[1])]:[0,0];cl.freeze=num(s.fz);cl.lv=num(s.lv);cl.tm=num(s.tm);cl.sc=Array.isArray(s.sc)?[num(s.sc[0]),num(s.sc[1])]:[0,0];
   cl.fl=Array.isArray(s.fl)?s.fl.filter(Array.isArray).slice(0,2).map(a=>[num(a[0]),num(a[1]),num(a[2]),num(a[3])]):[];
   setMap(cl.map);
@@ -1188,7 +1189,7 @@ function hostNet(dt){
   for(const{id,msg}of NET.clients()){
     if(!msg||typeof msg!=='object')continue;const sid=String(id).slice(0,64);lastSeen.set(sid,now);
     const prof=arrProf(msg.p);remoteIn.set(sid,parseInp(msg.i));const r=sim.roster.find(x=>x.id===sid);
-    if(!r){if(sim.state==='lobby'){if(sim.roster.length<8){sim.roster.push({id:sid,prof,isBot:false,team:-1});autoTeam()}}else if(sim.roster.length+pending.size<8)pending.set(sid,prof)}
+    if(!r){if(sim.state==='lobby'){if(sim.roster.length<MAXP){sim.roster.push({id:sid,prof,isBot:false,team:-1});autoTeam()}}else if(sim.roster.length+pending.size<MAXP)pending.set(sid,prof)}
     else if(sim.state==='lobby'&&JSON.stringify(r.prof)!==JSON.stringify(prof))r.prof=prof}
   for(const r of sim.roster.slice()){if(r.isBot||r.id===myId)continue;
     if(now-(lastSeen.get(r.id)||0)>15000){sim.roster.splice(sim.roster.indexOf(r),1);const c=sim.players.find(p=>p.id===r.id);
@@ -1349,7 +1350,7 @@ $('#botCtl').onclick=e=>{const d=e.target.dataset&&e.target.dataset.d;if(d&&isHo
 $('#start').onclick=()=>{if(isHost){startRound();lockMouse()}};
 $('#leave').onclick=leaveGame;$('#leave2').onclick=leaveGame;
 $('#again').onclick=()=>{startRound();lockMouse()};
-$('#toLobby').onclick=()=>{sim.state='lobby';for(const[id,prof]of pending)if(sim.roster.length<8)sim.roster.push({id,prof,isBot:false,team:-1});pending.clear();autoTeam();clearViews();clearProj();clearFx();enterLobby()};
+$('#toLobby').onclick=()=>{sim.state='lobby';for(const[id,prof]of pending)if(sim.roster.length<MAXP)sim.roster.push({id,prof,isBot:false,team:-1});pending.clear();autoTeam();clearViews();clearProj();clearFx();enterLobby()};
 $('#copy').onclick=()=>{try{navigator.clipboard.writeText(roomCode).then(()=>{$('#copy').textContent='Copied'},()=>{})}catch(e){}setTimeout(()=>$('#copy').textContent='Copy',1500)};
 let quitArm=0;$('#quit').onclick=()=>{if(performance.now()-quitArm<2500){leaveGame();return}quitArm=performance.now();$('#quit').textContent='Tap again to leave';setTimeout(()=>$('#quit').textContent='Leave',2500)};
 $('#nextSpec').onclick=nextSpec;
