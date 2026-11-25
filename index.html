@@ -1193,6 +1193,33 @@ function localT(code,host){
   return{kind:'local',myId:()=>id,sendState:s=>ch.postMessage({r:'h',s}),sendInput:m=>ch.postMessage({r:'c',id,m}),
     clients:()=>[...cls].filter(([,e])=>performance.now()-e.at<4000).map(([id,e])=>({id,msg:e.msg})),host:()=>performance.now()-ht<4000?hm:null,close:()=>ch.close()}}
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+/* Backup relay: free public MQTT servers carry the game when a network blocks direct connections. */
+const RELAYS=window.PB_RELAYS||[{url:'wss://broker.emqx.io:8084/mqtt'},{url:'wss://mqtt.eclipseprojects.io:443/mqtt'},{url:'wss://broker.hivemq.com:8884/mqtt'},{url:'wss://demo.tbmq.io:443/mqtt',username:'demo'}];
+const MQTT_SRC='https://cdn.jsdelivr.net/npm/mqtt@5.16.1/dist/mqtt.min.js';let mqttP=null;
+function loadMqtt(){if(window.mqtt)return Promise.resolve(window.mqtt);if(mqttP)return mqttP;
+  mqttP=new Promise(res=>{const sc=document.createElement('script');sc.src=MQTT_SRC;sc.onload=()=>res(window.mqtt||null);sc.onerror=()=>{mqttP=null;res(null)};document.head.appendChild(sc);setTimeout(()=>res(window.mqtt||null),8000)});return mqttP}
+const dec=new TextDecoder(),rTopic=code=>'poopball-v5/'+code.toLowerCase();
+function brokerConn(lib,b,onMsg){return new Promise(res=>{let cli;try{cli=lib.connect(b.url,{clientId:'pb'+Math.random().toString(36).slice(2,10),clean:true,connectTimeout:5000,reconnectPeriod:2000,keepalive:20,username:b.username,protocolVersion:4})}catch(e){return res(null)}
+  let ok=false;cli.on('connect',()=>{if(!ok){ok=true;res(cli)}});cli.on('message',(t,buf)=>{let d;try{d=JSON.parse(typeof buf==='string'?buf:dec.decode(buf))}catch(_){return}if(d&&typeof d==='object')onMsg(t,d)});cli.on('error',()=>{});
+  setTimeout(()=>{if(!ok){try{cli.end(true)}catch(e){}res(null)}},6000)})}
+async function relayHost(code){const lib=await loadMqtt();if(!lib)return null;const tp=rTopic(code),cls=new Map(),bs=[];
+  await Promise.all(RELAYS.map(async b=>{const e={cli:null,heard:0};const cli=await brokerConn(lib,b,(t,d)=>{const id='r:'+t.split('/').pop();const o=cls.get(id);if(o&&o.msg&&d.q<o.msg.q&&o.msg.q-d.q<1e5)return;cls.set(id,{msg:d,at:performance.now()});e.heard=performance.now()});
+    if(cli){e.cli=cli;cli.subscribe(tp+'/c/+',{qos:0});bs.push(e)}}));
+  if(!bs.length)return null;let last=0;
+  return{kind:'relay',myId:()=>'H',sendInput:()=>{},host:()=>null,
+    sendState:s=>{const t=performance.now();if(t-last<75)return;last=t;let str=null;for(const e of bs)if(t-e.heard<15000){str=str||JSON.stringify(s);try{e.cli.publish(tp+'/h',str,{qos:0})}catch(_){}}},
+    clients:()=>[...cls].filter(([,e])=>performance.now()-e.at<15000).map(([id,e])=>({id,msg:e.msg})),close:()=>{for(const e of bs)try{e.cli.end(true)}catch(_){}}}}
+function relayClient(code){return new Promise(async res=>{const lib=await loadMqtt();if(!lib)return res({failed:'blocked'});
+  const tp=rTopic(code),id=Math.random().toString(36).slice(2,9),cands=[];let chosen=null,hm=null,ht=0,done=false;
+  const T={kind:'relay',myId:()=>'r:'+id,sendState:()=>{},clients:()=>[],host:()=>performance.now()-ht<15000?hm:null,
+    sendInput:m=>{if(chosen)try{chosen.publish(tp+'/c/'+id,JSON.stringify(m),{qos:0})}catch(_){}},close:()=>{for(const c of cands)try{c.end(true)}catch(_){}}};
+  const finish=v=>{if(done)return;done=true;clearInterval(hello);for(const c of cands)if(c!==chosen||!v||v.failed)try{c.end(true)}catch(_){}res(v)};
+  const hello=setInterval(()=>{const m=JSON.stringify({p:profArr(store.prof),i:inpArr(),q:0,ts:Math.round(performance.now())});for(const c of cands)try{c.publish(tp+'/c/'+id,m,{qos:0})}catch(_){}},400);
+  RELAYS.forEach(b=>{const h={cli:null};brokerConn(lib,b,(t,d)=>{if(!chosen&&!done){chosen=h.cli;finish(T)}if(h.cli!==chosen)return;if(hm&&d.n<hm.n&&hm.n-d.n<1e5)return;hm=d;ht=performance.now()})
+    .then(cli=>{if(!cli)return;if(done){try{cli.end(true)}catch(_){}return}h.cli=cli;cands.push(cli);cli.subscribe(tp+'/h',{qos:0})})});
+  setTimeout(()=>finish({failed:'blocked'}),9000)})}
+function firstOk(ps){return new Promise(res=>{let left=ps.length,fails=[];ps.forEach(p=>p.then(v=>{if(v&&!v.failed){res(v);ps.forEach(q=>q.then(o=>{if(o&&o!==v&&o.close)o.close()}))}else{fails.push(v);if(--left===0)res(fails.find(f=>f&&f.failed==='peer-unavailable')||fails[0]||{failed:'blocked'})}}))})}
+function mergeT(a,b){return{kind:a.kind,myId:a.myId,sendInput:()=>{},host:()=>null,sendState:s=>{a.sendState(s);b.sendState(s)},clients:()=>a.clients().concat(b.clients()),close:()=>{a.close();b.close()}}}
 /* Host opens BOTH a Claude room and an internet (PeerJS) room, so friends on the artifact link and on the GitHub link meet in the same game. */
 async function connect(code,host,step){step=step||(()=>{});
   if(location.hash==='#local')return localT(code,host);
@@ -1201,14 +1228,16 @@ async function connect(code,host,step){step=step||(()=>{});
     if(p&&p.failed==='unavailable-id'){if(r)r.close();return p}
     const ok=p&&!p.failed;if(r&&ok)return bothT(r,p);if(r)return r;if(ok)return p;return p||{failed:'nopeer'}}
   if(r){for(let i=0;i<30;i++){if(r.host())return r;await sleep(200)}r.close()}
-  step('Connecting to the host');const p=await peerT(code,false,10000);return p&&!p.failed?p:(p||{failed:'nopeer'})}
+  step('Connecting to the host');const pp=peerT(code,false,10000);const first=await Promise.race([pp,sleep(3000).then(()=>null)]);
+  if(first&&!first.failed)return first;
+  step('Trying the backup relay');return firstOk([pp,relayClient(code)])}
 const JOINERR={'peer-unavailable':'No game with that code. Check the code, and make sure the host still has the game open.',
   blocked:'Found the game but couldn’t connect to it. School Wi-Fi and some phone networks block direct connections. Try both being on the same hotspot, or have the host add a relay key (see the TURN line in the code).',
   server:'Couldn’t reach the matchmaking server. Check your internet and try again in a moment.',network:'Couldn’t reach the matchmaking server. Check your internet and try again in a moment.','server-error':'The matchmaking server is busy. Try again in a moment.',
   nopeer:'Online play isn’t available in this browser here. Try opening the GitHub link in Chrome or Safari.',
   slow:'Couldn’t connect after 25 seconds. Tap Join to try again. If it keeps happening, this network is probably blocking it (school Wi-Fi or phone data): try a phone hotspot or the other link.'};
 let joinTok=0;
-const NOTE={both:'Online. Friends can join with this code from this artifact (share it with them first) or from your GitHub link. Keep this tab open: if you switch away, the game can pause.',room:'Online through Claude only. Friends must open this same artifact (share it with them first), then join with this code.',peer:'Online. Friends open this page’s link (or the Claude artifact) and join with this code. Keep this tab open: if you switch away, the game can pause.',local:'Offline test mode: only other tabs in this browser can join.'};
+const NOTE={both:'Online. Friends can join with this code from this artifact (share it with them first) or from your GitHub link. Keep this tab open: if you switch away, the game can pause.',room:'Online through Claude only. Friends must open this same artifact (share it with them first), then join with this code.',peer:'Online. Friends open this page’s link (or the Claude artifact) and join with this code. Keep this tab open: if you switch away, the game can pause.',local:'Offline test mode: only other tabs in this browser can join.',relay:'Online through the backup relay (used when a network blocks direct connections). Expect a little more lag.'};
 function parseInp(a){if(!Array.isArray(a))return null;const n=(i,lo,hi)=>clamp(num(a[i]),lo,hi);
   return{mx:n(0,-1,1),mz:n(1,-1,1),yaw:n(2,-1e5,1e5),pitch:n(3,-2,2),walk:n(4,0,1),crouch:n(5,0,1),j:n(6,0,1e9)|0,r:n(7,0,1e9)|0,tp:n(8,0,1e9)|0,tr:n(9,0,1e9)|0,pw:n(10,-1,1),ax:n(11,-80,80),ay:n(12,-10,60),az:n(13,-80,80),em:n(14,0,1e9)|0,emi:n(15,0,5)|0,th:n(16,0,1)}}
 const inpArr=()=>[r2(inp.mx),r2(inp.mz),r2(inp.yaw),r2(inp.pitch),inp.walk,inp.crouch,inp.j,inp.r,inp.tp,inp.tr,r2(inp.pw),r2(inp.ax),r2(inp.ay),r2(inp.az),inp.em,inp.emi,holding?1:0];
@@ -1228,7 +1257,7 @@ function hostNet(dt){
 function clientNet(dt){
   myId=NET.myId()||myId;
   const key=[inp.j,inp.r,inp.tp,inp.tr,inp.em].join();
-  if((sendAcc+=dt)>=(NET.kind==='room'?1/20:1/30)||key!==lastSentKey){sendAcc=0;lastSentKey=key;NET.sendInput({p:profArr(store.prof),i:inpArr(),q:++inQ,ts:Math.round(performance.now())})}
+  if((sendAcc+=dt)>=(NET.kind==='room'||NET.kind==='relay'?1/20:1/30)||key!==lastSentKey){sendAcc=0;lastSentKey=key;NET.sendInput({p:profArr(store.prof),i:inpArr(),q:++inQ,ts:Math.round(performance.now())})}
   const s=NET.host(),now=performance.now();
   if(s&&s!==cl.lastSnap){cl.lastSnap=s;cl.lastAt=now;applySnap(s)}
   const quiet=now-(cl.lastAt||cl.joinedAt);
@@ -1370,7 +1399,9 @@ function hostSetup(){isHost=true;myId='H';sim.roster=[{id:'H',prof:store.prof,is
 $('#solo').onclick=()=>{hostSetup();NET=null;roomCode='';addBot('medium');addBot('medium');addBot('medium');autoTeam();clearViews();enterLobby()};
 $('#create').onclick=async()=>{netNote('Opening a room…');let t=null,code;
   for(let i=0;i<3;i++){code=genCode();t=await connect(code,true);if(!(t&&t.failed==='unavailable-id'))break}
+  if(!t||t.failed){if(location.hash!=='#local'&&!(t&&t.failed==='unavailable-id')){netNote('Opening a backup relay room…');const rt=await relayHost(code);if(rt)t=rt}}
   if(!t||t.failed){netNote(JOINERR[t&&t.failed]||'Could not open an online room. Try again in a moment.');return}
+  if(t.kind!=='relay'&&t.kind!=='local'){const t0=t;relayHost(code).then(rt=>{if(!rt)return;if(NET===t0)NET=mergeT(t0,rt);else rt.close()})}
   hostSetup();NET=t;netKind=t.kind;roomCode=code;netNote('');clearViews();enterLobby()};
 $('#joinF').onsubmit=async e=>{e.preventDefault();const code=$('#code').value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,4);if(code.length!==4){netNote('Room codes are 4 letters or numbers.');return}
   const tok=++joinTok,t0=performance.now();let stepTxt='Joining';const tick=setInterval(()=>{if(tok===joinTok)netNote(`${stepTxt}… ${Math.round((performance.now()-t0)/1000)}s (tap Join again to retry)`)},500);netNote('Joining…');
